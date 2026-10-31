@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>CS2 2D Replay</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <div id="drop">
+    <p class="drop-title">Drop a <b>.dem</b> file here</p>
+    <p>or</p>
+    <label class="btn primary">Choose file<input id="file" type="file" accept=".dem" hidden></label>
+    <p id="msg"></p>
+  </div>
+
+  <div id="app">
+    <header id="top">
+      <span id="mapinfo"></span>
+      <span class="team-name" id="nameA"></span>
+      <span class="score" id="scoreA">0</span>
+      <span id="clock">1:55</span>
+      <span class="score" id="scoreB">0</span>
+      <span class="team-name" id="nameB"></span>
+      <button id="newbtn">New demo</button>
+    </header>
+
+    <aside class="col" id="colA"></aside>
+
+    <main id="center">
+      <div id="tools">
+        <label class="toggle"><input type="checkbox" id="avatars" checked> Avatars</label>
+        <select id="fov" title="Field of view">
+          <option value="106.26">FOV 16:9</option>
+          <option value="100.39">FOV 16:10</option>
+          <option value="90">FOV 4:3</option>
+        </select>
+        <select id="trj" title="Grenade trajectories">
+          <option value="trail">Grenades: flight + trail</option>
+          <option value="flight">Grenades: flight only</option>
+          <option value="off">Grenades: off</option>
+        </select>
+        <select id="lvl" hidden>
+          <option value="auto">Level: auto</option>
+          <option value="0">Upper</option>
+          <option value="1">Lower</option>
+        </select>
+        <button id="resetview" title="Reset zoom (or double click the map)">Reset view</button>
+      </div>
+      <div id="killfeed"></div>
+      <canvas id="cv" width="1024" height="1024"></canvas>
+      <div id="note"></div>
+    </main>
+
+    <aside class="col" id="colB"></aside>
+
+    <section id="bottom"><div id="rtiles"></div></section>
+    <section id="tlrow">
+      <button id="play">&#9654;</button>
+      <div id="tl"><div id="ph"></div></div>
+      <div id="spd">
+        <button data-speed="0.5">0.5</button>
+        <button data-speed="1" class="on">1</button>
+        <button data-speed="1.5">1.5</button>
+        <button data-speed="2">2</button>
+        <button data-speed="3">3</button>
+        <button data-speed="4">4</button>
+      </div>
+    </section>
+  </div>
+
+  <script type="module" src="/static/js/main.js"></script>
+</body>
+</html>
