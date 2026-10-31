@@ -187,8 +187,8 @@ function setupControls() {
     }
     if (e.code === 'ArrowRight') state.tick = Math.min(state.round.end, state.tick + 5 * tickrate);
     if (e.code === 'ArrowLeft') state.tick = Math.max(state.round.start, state.tick - 5 * tickrate);
-    if (e.code === 'ArrowUp' && state.roundIndex > 0) selectRound(state.roundIndex - 1);
-    if (e.code === 'ArrowDown' && state.roundIndex < state.data.rounds.length - 1) selectRound(state.roundIndex + 1);
+    if (e.code === 'ArrowUp' && state.roundIndex < state.data.rounds.length - 1) selectRound(state.roundIndex + 1);
+    if (e.code === 'ArrowDown' && state.roundIndex > 0) selectRound(state.roundIndex - 1);
   });
 }
 
