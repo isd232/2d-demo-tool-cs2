@@ -1,8 +1,8 @@
-import { state, $ } from './state.js';
+import { state } from './state.js';
 import { ctx } from './canvas.js';
 import { worldToCanvas, worldLength, onCurrentLevel } from './geometry.js';
 import {
-  SIDE_COLOR, GRENADE_RGB, FOV_LENGTH_UNITS, SMOKE_TIMER_FROM, MOLLY_TIMER_FROM, smoothstep,
+  SIDE_COLOR, GRENADE_RGB, FOV_LENGTH_UNITS, FOV_DEGREES, SMOKE_TIMER_FROM, MOLLY_TIMER_FROM, smoothstep,
 } from './config.js';
 import { grenadeImage } from './icons.js';
 import { avatarOf } from './avatars.js';
@@ -219,7 +219,7 @@ export function drawTrajectory(trajectory, tickRate, mode) {
 }
 
 function drawFov(x, y, yawDegrees, color) {
-  const half = (parseFloat($('#fov').value) / 2) * Math.PI / 180;
+  const half = (FOV_DEGREES / 2) * Math.PI / 180;
   const angle = (-yawDegrees * Math.PI) / 180;
   const r = worldLength(FOV_LENGTH_UNITS) || 60;
 

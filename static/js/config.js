@@ -10,6 +10,7 @@ export const GRENADE_RGB = {
 };
 
 export const FOV_LENGTH_UNITS = 260;
+export const FOV_DEGREES = 106.26;
 export const ROUND_SECONDS = 115;
 export const BOMB_SECONDS = 40;
 
