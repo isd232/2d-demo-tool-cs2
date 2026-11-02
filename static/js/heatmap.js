@@ -1,10 +1,9 @@
-// Heatmapa pozycji graczy (dla rundy albo całego meczu).
 import { state, $ } from './state.js';
 import { SIZE } from './canvas.js';
 import { worldToCanvas, onCurrentLevel } from './geometry.js';
 
-const GRID = 256;                               // rozdzielczość siatki
-const COLORS = [                                // paleta: zimne -> gorące
+const GRID = 256;                               
+const COLORS = [                                
   [0, [30, 60, 255]],
   [0.33, [30, 220, 140]],
   [0.66, [255, 235, 60]],
@@ -14,7 +13,6 @@ const COLORS = [                                // paleta: zimne -> gorące
 let cacheKey = '';
 let cacheCanvas = null;
 
-// Wymusza ponowne przeliczenie (np. po zmianie rundy lub ustawień)
 export function invalidateHeatmap() {
   cacheKey = '';
 }
@@ -31,7 +29,6 @@ function colorAt(t) {
   return COLORS[COLORS.length - 1][1];
 }
 
-// Dodaje do siatki "plamkę" (rozmyty punkt) wokół pozycji gracza
 function addBlob(density, gx, gy) {
   for (let dy = -3; dy <= 3; dy++) {
     for (let dx = -3; dx <= 3; dx++) {
@@ -42,9 +39,8 @@ function addBlob(density, gx, gy) {
   }
 }
 
-// Zwraca canvas z heatmapą albo null, gdy heatmapa jest wyłączona
 export function getHeatmapCanvas() {
-  const scope = $('#hm').value;                 // 'off' | 'round' | 'match'
+  const scope = $('#hm').value;                
   if (scope === 'off') return null;
 
   const radarLoaded = state.radar.main && state.radar.main.complete ? 1 : 0;
@@ -65,7 +61,7 @@ export function getHeatmapCanvas() {
 
   let max = 0;
   for (const v of density) if (v > max) max = v;
-  const reference = max * 0.55 || 1;            // 55% maksimum = "najgorętszy" kolor
+  const reference = max * 0.55 || 1;           
 
   const canvas = document.createElement('canvas');
   canvas.width = canvas.height = GRID;
