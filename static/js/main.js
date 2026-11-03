@@ -1,10 +1,12 @@
 import { state, $ } from './state.js';
 import { canvas } from './canvas.js';
+import { JUMP_LEAD_SECONDS } from './config.js';
 import { drawFrame } from './renderer.js';
 import { loadAvatars } from './avatars.js';
 import { indexCombatEvents } from './combat.js';
 import { canvasPoint, zoomAt, panBy, resetView } from './view.js';
 import { setupScoreboard } from './scoreboard.js';
+import { setupEconomy } from './economy.js';
 import {
   buildRoundTiles, highlightRoundTile, buildTimeline, resetCards, resetKillfeed,
 } from './panels.js';
@@ -109,6 +111,44 @@ function loop(timestamp) {
   requestAnimationFrame(loop);
 }
 
+function jumpToTick(eventTick) {
+  const lead = JUMP_LEAD_SECONDS * state.data.tickrate;
+  state.tick = Math.max(state.round.start, Math.min(state.round.end, eventTick - lead));
+}
+
+const killTicks = (round) => round.events.filter((e) => e.type === 'kill').map((e) => e.t);
+
+function jumpToNextKill() {
+  const lead = JUMP_LEAD_SECONDS * state.data.tickrate;
+  const next = killTicks(state.round).find((t) => t - lead > state.tick + 1);
+  if (next !== undefined) {
+    jumpToTick(next);
+    return;
+  }
+  if (state.roundIndex < state.data.rounds.length - 1) {
+    selectRound(state.roundIndex + 1);
+    const first = killTicks(state.round)[0];
+    if (first !== undefined) jumpToTick(first);
+  }
+}
+
+function jumpToPreviousKill() {
+  const lead = JUMP_LEAD_SECONDS * state.data.tickrate;
+  const earlier = killTicks(state.round).filter((t) => t - lead < state.tick - 1);
+  if (earlier.length) {
+    jumpToTick(earlier[earlier.length - 1]);
+    return;
+  }
+  if (state.roundIndex > 0) {
+    selectRound(state.roundIndex - 1);
+    const kills = killTicks(state.round);
+    if (kills.length) jumpToTick(kills[kills.length - 1]);
+    else state.tick = state.round.start;
+  } else {
+    state.tick = state.round.start;
+  }
+}
+
 function setupMapZoom() {
   canvas.addEventListener('wheel', (e) => {
     e.preventDefault();
@@ -141,6 +181,29 @@ function setupMapZoom() {
   $('#resetview').onclick = resetView;
 }
 
+function setupKillNavigation() {
+  const row = $('#tlrow');
+  const speed = $('#spd');
+
+  const previous = document.createElement('button');
+  previous.textContent = '\u25C0 Kill';
+  previous.title = 'Previous kill ([)';
+  previous.onclick = jumpToPreviousKill;
+
+  const next = document.createElement('button');
+  next.textContent = 'Kill \u25B6';
+  next.title = 'Next kill (])';
+  next.onclick = jumpToNextKill;
+
+  row.insertBefore(previous, speed);
+  row.insertBefore(next, speed);
+
+  $('#killfeed').addEventListener('click', (e) => {
+    const entry = e.target.closest('.kf');
+    if (entry && state.data) jumpToTick(Number(entry.dataset.jump));
+  });
+}
+
 function setupControls() {
   $('#play').onclick = () => {
     if (state.tick >= state.round.end) state.tick = state.round.start;
@@ -167,6 +230,11 @@ function setupControls() {
     state.tick = state.round.start + fraction * (state.round.end - state.round.start);
   };
   timeline.onpointerdown = (e) => {
+    const jump = e.target.dataset && e.target.dataset.jump;
+    if (jump !== undefined) {
+      jumpToTick(Number(jump));
+      return;
+    }
     dragging = true;
     timeline.setPointerCapture(e.pointerId);
     seekTo(e);
@@ -189,10 +257,14 @@ function setupControls() {
     if (e.code === 'ArrowLeft') state.tick = Math.max(state.round.start, state.tick - 5 * tickrate);
     if (e.code === 'ArrowUp' && state.roundIndex < state.data.rounds.length - 1) selectRound(state.roundIndex + 1);
     if (e.code === 'ArrowDown' && state.roundIndex > 0) selectRound(state.roundIndex - 1);
+    if (e.key === ']') jumpToNextKill();
+    if (e.key === '[') jumpToPreviousKill();
   });
 }
 
 setupUploadUi();
 setupControls();
+setupKillNavigation();
 setupMapZoom();
 setupScoreboard();
+setupEconomy(selectRound);

@@ -169,7 +169,7 @@ function killfeedEntryHtml(e, opacity) {
   const attacker = e.att ? killfeedName(e.att, e.attackerId) : '';
   const assist = e.ast ? `<span class="kf-assist">+ ${killfeedName(e.ast, e.assisterId)}</span>` : '';
 
-  return `<div class="kf" style="opacity:${opacity}">${attacker}${assist}${weapon}${badges}${killfeedName(e.vic, e.victimId)}</div>`;
+  return `<div class="kf" data-jump="${e.t}" title="Click to jump to this kill" style="opacity:${opacity}">${attacker}${assist}${weapon}${badges}${killfeedName(e.vic, e.victimId)}</div>`;
 }
 
 export function renderKillfeed() {
@@ -249,6 +249,7 @@ export function buildTimeline() {
       mark.style.left = percent(e.t);
       mark.style.background = SIDE_COLOR[round.sides[e.attackerId]] || '#aaa';
       mark.title = `${e.att} - ${e.vic} (${cleanName(e.weapon)})`;
+      mark.dataset.jump = e.t;
       timeline.appendChild(mark);
     } else if (e.type.startsWith('bomb_')) {
       const mark = document.createElement('div');
@@ -256,6 +257,7 @@ export function buildTimeline() {
       mark.style.left = percent(e.t);
       mark.style.setProperty('--icon', `url(${iconSrc(e.type === 'bomb_defused' ? 'defuser' : 'c4')})`);
       mark.title = BOMB_TITLES[e.type] || '';
+      mark.dataset.jump = e.t;
       timeline.appendChild(mark);
     }
   }

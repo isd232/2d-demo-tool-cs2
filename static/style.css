@@ -169,7 +169,10 @@ canvas.panning { cursor: grabbing; }
   border: 1px solid rgba(255, 255, 255, .14);
   border-radius: 6px;
   text-shadow: 0 1px 2px #000;
+  pointer-events: auto;
+  cursor: pointer;
 }
+.kf:hover { border-color: rgba(255, 255, 255, .45); }
 .kf-assist { font-size: 12px; opacity: .85; }
 .kf-weapon { height: 15px; width: auto; max-width: 70px; filter: drop-shadow(0 1px 1px #000); }
 .kf-badge { height: 14px; width: 14px; }
@@ -192,6 +195,7 @@ canvas.panning { cursor: grabbing; }
 
 #tlrow { grid-column: 1 / 4; display: flex; align-items: center; gap: 10px; padding: 4px 12px 12px; }
 #play { width: 48px; height: 42px; font-size: 16px; }
+#tlrow > button:not(#play) { height: 42px; white-space: nowrap; }
 #tl {
   position: relative;
   flex: 1;
@@ -203,7 +207,17 @@ canvas.panning { cursor: grabbing; }
   touch-action: none;
   overflow: hidden;
 }
-#tl .kill-mark { position: absolute; bottom: 4px; width: 4px; height: 20px; border-radius: 2px; transform: translateX(-2px); }
+#tl .kill-mark {
+  position: absolute;
+  bottom: 4px;
+  width: 4px;
+  height: 20px;
+  border-radius: 2px;
+  transform: translateX(-2px);
+  cursor: pointer;
+}
+#tl .kill-mark::after { content: ""; position: absolute; inset: -4px -6px; }
+#tl .kill-mark:hover { filter: brightness(1.4); transform: translateX(-2px) scaleY(1.15); }
 #tl .bomb-zone { position: absolute; top: 0; bottom: 0; right: 0; background: #ff3b3b0d; }
 #tl .post-zone { position: absolute; top: 0; bottom: 0; right: 0; background: #ffffff10; border-left: 1px dashed #ffffff55; }
 #tl .bomb-mark {
@@ -216,10 +230,12 @@ canvas.panning { cursor: grabbing; }
   -webkit-mask: var(--icon) center / contain no-repeat;
   mask: var(--icon) center / contain no-repeat;
   opacity: .85;
+  cursor: pointer;
 }
+#tl .bomb-mark:hover { opacity: 1; }
 #tl .bomb-mark.bomb_defused { background: #4aa3ff; }
 #tl .bomb-mark.bomb_exploded { background: #ff6b5f; }
-#ph { position: absolute; top: 0; bottom: 0; width: 3px; background: var(--accent); box-shadow: 0 0 8px var(--accent); transform: translateX(-1px); }
+#ph { position: absolute; top: 0; bottom: 0; width: 3px; background: var(--accent); box-shadow: 0 0 8px var(--accent); transform: translateX(-1px); pointer-events: none; }
 
 #spd { display: flex; gap: 2px; }
 #spd button { padding: 10px 11px; }
@@ -258,7 +274,7 @@ canvas.panning { cursor: grabbing; }
   pointer-events: none;
 }
 
-#matchstats {
+#matchstats, #economy {
   display: none;
   position: fixed;
   inset: 0;
@@ -280,3 +296,23 @@ canvas.panning { cursor: grabbing; }
 }
 .ms-close { position: absolute; top: 8px; right: 10px; padding: 2px 10px; font-size: 20px; line-height: 1.2; }
 .ms-legend { margin-top: 12px; font-size: 11px; line-height: 1.5; color: var(--muted); }
+
+.eco-scroll { max-height: 38vh; overflow: auto; border: 1px solid rgba(255, 255, 255, .08); border-radius: 8px; }
+.eco-table { width: 100%; border-collapse: collapse; }
+.eco-table th { position: sticky; top: 0; padding: 5px 8px; text-align: left; font-size: 11px; font-weight: 600; color: var(--muted); background: #0d0f14; }
+.eco-table td { padding: 5px 8px; border-top: 1px solid rgba(255, 255, 255, .06); font-variant-numeric: tabular-nums; }
+.eco-table tbody tr { cursor: pointer; }
+.eco-table tbody tr:hover { background: rgba(255, 255, 255, .05); }
+.eco-table tbody tr.current td:first-child { box-shadow: inset 3px 0 0 var(--accent); }
+.eco-table tbody tr.selected { background: rgba(124, 92, 255, .18); }
+.eco-round { font-weight: 700; }
+.eco-label { color: var(--muted); white-space: nowrap; }
+.eco-value { min-width: 150px; }
+.eco-value span { display: block; margin-top: 2px; font-size: 12px; }
+.eco-bar { height: 4px; background: rgba(255, 255, 255, .08); border-radius: 2px; overflow: hidden; }
+.eco-bar i { display: block; height: 100%; }
+.eco-bank { color: #5fe06f; }
+.eco-detail { margin-top: 14px; }
+.eco-detail-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; font-weight: 700; }
+.eco-items { display: flex; justify-content: flex-end; align-items: center; gap: 6px; }
+.eco-items .wicon, .eco-items .uicon { opacity: 1; }

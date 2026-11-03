@@ -23,6 +23,8 @@ export const HIT_ANIM_SECONDS = 0.5;
 export const KILLFEED_SECONDS = 6;
 export const KILLFEED_MAX = 5;
 
+export const JUMP_LEAD_SECONDS = 3;
+
 export function smoothstep(x) {
   const s = Math.min(1, Math.max(0, x));
   return s * s * (3 - 2 * s);
