@@ -2,7 +2,7 @@ Browser-based 2D replay viewer for Counter-Strike 2 demos.
 
 How to run:
     pip install -r requirements.txt
-    python app.py
+    \npython app.py
 
 
 Controls
