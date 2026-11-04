@@ -11,6 +11,7 @@ import { showProgress, hideProgress } from './progress.js';
 import {
   buildRoundTiles, highlightRoundTile, buildTimeline, resetCards, resetKillfeed,
 } from './panels.js';
+import './timeline-ui.js';
 
 const UPLOAD_SHARE = 5;
 const DOWNLOAD_SHARE = 10;

@@ -1,0 +1,37 @@
+#timeline-clock {
+  color: #b8bfce;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  min-width: 88px;
+  text-align: center;
+  user-select: none;
+}
+
+#timeline-tooltip {
+  position: fixed;
+  z-index: 100;
+  max-width: min(460px, calc(100vw - 16px));
+  padding: 8px 11px;
+  border: 1px solid #343a49;
+  border-radius: 8px;
+  background: #141720;
+  color: #eff2f8;
+  box-shadow: 0 5px 20px #0008;
+  pointer-events: none;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+#timeline-tooltip[hidden] { display: none; }
+.timeline-tooltip-title { font-variant-numeric: tabular-nums; }
+.timeline-tooltip-hint { margin-top: 4px; color: #939db0; font-size: 11px; }
+
+#tl .kill-mark:hover { filter: brightness(1.5); }
+#tl .bomb-mark:hover { opacity: 1; }
+
+@media (max-width: 1000px) {
+  #tlrow { flex-wrap: wrap; }
+  #tl { min-width: 180px; }
+  #timeline-clock { min-width: 82px; }
+}
