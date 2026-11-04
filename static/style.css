@@ -44,6 +44,22 @@ button:hover, select:hover { filter: brightness(1.2); }
 .drop-title { font-size: 18px; color: var(--text); }
 #msg { margin-top: 10px; color: #ff7b7b; }
 
+#progress { display: none; margin-top: 22px; }
+.progress-track {
+  height: 8px;
+  overflow: hidden;
+  background: rgba(255, 255, 255, .1);
+  border-radius: 4px;
+}
+.progress-fill {
+  width: 0;
+  height: 100%;
+  background: var(--accent);
+  border-radius: 4px;
+  transition: width .2s ease;
+}
+.progress-label { margin-top: 8px; font-size: 12px; color: var(--muted); }
+
 #app {
   display: none;
   height: 100vh;

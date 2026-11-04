@@ -7,25 +7,101 @@ import { indexCombatEvents } from './combat.js';
 import { canvasPoint, zoomAt, panBy, resetView } from './view.js';
 import { setupScoreboard } from './scoreboard.js';
 import { setupEconomy } from './economy.js';
+import { showProgress, hideProgress } from './progress.js';
 import {
   buildRoundTiles, highlightRoundTile, buildTimeline, resetCards, resetKillfeed,
 } from './panels.js';
 
-async function uploadDemo(file) {
-  $('#msg').textContent = 'Parsing... (large demos may take a moment)';
+const UPLOAD_SHARE = 5;
+const DOWNLOAD_SHARE = 10;
 
-  const form = new FormData();
-  form.append('demo', file);
-  const response = await fetch('/api/upload', { method: 'POST', body: form });
-  const result = await response.json();
-  if (!response.ok) {
-    $('#msg').textContent = result.error;
-    return;
+let busy = false;
+
+function sendFile(file) {
+  return new Promise((resolve, reject) => {
+    const request = new XMLHttpRequest();
+    request.open('POST', '/api/upload');
+    request.upload.onprogress = (e) => {
+      if (e.lengthComputable) showProgress((e.loaded / e.total) * UPLOAD_SHARE, 'Uploading');
+    };
+    request.onload = () => {
+      let body = {};
+      try {
+        body = JSON.parse(request.responseText);
+      } catch (error) {
+        body = {};
+      }
+      if (request.status >= 200 && request.status < 300) resolve(body);
+      else reject(new Error(body.error || 'Upload failed'));
+    };
+    request.onerror = () => reject(new Error('Network error'));
+    const form = new FormData();
+    form.append('demo', file);
+    request.send(form);
+  });
+}
+
+async function waitForJob(jobId) {
+  const parseShare = 100 - UPLOAD_SHARE - DOWNLOAD_SHARE;
+  for (;;) {
+    const response = await fetch('/api/progress/' + jobId);
+    if (!response.ok) throw new Error('Lost track of the parsing job');
+    const job = await response.json();
+    showProgress(UPLOAD_SHARE + (job.percent / 100) * parseShare, job.label);
+    if (job.state === 'done') return job.id;
+    if (job.state === 'error') throw new Error(job.error);
+    await new Promise((resolve) => setTimeout(resolve, 250));
   }
+}
 
-  const replay = await fetch('/api/replay/' + result.id);
-  state.data = await replay.json();
-  startPlayer();
+async function downloadReplay(id) {
+  const base = 100 - DOWNLOAD_SHARE;
+  const response = await fetch('/api/replay/' + id);
+  if (!response.ok) throw new Error('Could not load the replay');
+  const total = Number(response.headers.get('Content-Length')) || 0;
+  if (!response.body || !total) {
+    showProgress(base, 'Loading replay');
+    return response.json();
+  }
+  const reader = response.body.getReader();
+  const chunks = [];
+  let received = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    chunks.push(value);
+    received += value.length;
+    showProgress(base + (received / total) * DOWNLOAD_SHARE * 0.8, 'Loading replay');
+  }
+  showProgress(100 - DOWNLOAD_SHARE * 0.2, 'Preparing replay');
+  await new Promise((resolve) => setTimeout(resolve, 30));
+  const bytes = new Uint8Array(received);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.length;
+  }
+  return JSON.parse(new TextDecoder().decode(bytes));
+}
+
+async function uploadDemo(file) {
+  if (busy) return;
+  busy = true;
+  $('#msg').textContent = '';
+  try {
+    showProgress(0, 'Uploading');
+    const { job } = await sendFile(file);
+    const id = await waitForJob(job);
+    state.data = await downloadReplay(id);
+    showProgress(100, 'Done');
+    hideProgress();
+    startPlayer();
+  } catch (error) {
+    hideProgress();
+    $('#msg').textContent = error.message;
+  } finally {
+    busy = false;
+  }
 }
 
 function setupUploadUi() {

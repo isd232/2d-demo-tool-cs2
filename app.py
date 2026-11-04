@@ -5,13 +5,24 @@ import os
 import re
 import shutil
 import tempfile
+import threading
+import time
+import urllib.error
 import urllib.request
+import uuid
 import xml.etree.ElementTree as ET
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
 
+import numpy as np
 import pandas as pd
 from flask import Flask, request, jsonify, send_from_directory, abort
 from demoparser2 import DemoParser
+
+try:
+    import orjson
+except ImportError:
+    orjson = None
 
 BASE = os.path.dirname(os.path.abspath(__file__))
 CACHE = os.path.join(BASE, "cache")
@@ -29,6 +40,33 @@ MOLLY_TICKS = 7 * TICKRATE
 MAX_FLIGHT_TICKS = 8 * TICKRATE
 POST_ROUND_TICKS = 7 * TICKRATE
 MAX_POST_ROUND_TICKS = 15 * TICKRATE
+MAX_STORED_JOBS = 20
+
+EVENT_NAMES = [
+    "round_freeze_end", "round_end", "round_start", "round_officially_ended",
+    "smokegrenade_detonate", "flashbang_detonate", "hegrenade_detonate", "inferno_startburn",
+    "smokegrenade_expired", "inferno_expire",
+    "bomb_planted", "bomb_defused", "bomb_exploded",
+    "weapon_fire", "player_hurt", "player_blind",
+]
+
+STAGES = [
+    ("events", "Reading events", 10),
+    ("tick data", "Reading player positions", 15),
+    ("prepare ticks", "Preparing positions", 5),
+    ("grenades", "Tracking grenades", 25),
+    ("snapshots", "Reading equipment", 20),
+    ("build rounds", "Building rounds", 8),
+    ("team names", "Finding team names", 5),
+    ("avatars (waiting)", "Loading avatars", 7),
+    ("radar", "Loading map radar", 2),
+    ("write json", "Saving replay", 3),
+]
+STAGE_INFO = {}
+_cumulative = 0
+for _key, _label, _weight in STAGES:
+    STAGE_INFO[_key] = (_label, _cumulative, _cumulative + _weight)
+    _cumulative += _weight
 
 FALLBACK_MAP_DATA = {
     "de_mirage": {"pos_x": -3230, "pos_y": 1713, "scale": 5.0},
@@ -54,6 +92,28 @@ NON_FIRING_WEAPONS = (
 )
 
 app = Flask(__name__)
+
+jobs = {}
+job_context = threading.local()
+
+
+def report(percent, label):
+    job = getattr(job_context, "job", None)
+    if job is not None:
+        job["percent"] = round(percent, 1)
+        job["label"] = label
+
+
+@contextmanager
+def timed(label):
+    info = STAGE_INFO.get(label)
+    if info:
+        report(info[1], info[0])
+    start = time.perf_counter()
+    yield
+    print(f"[time] {label}: {time.perf_counter() - start:.2f}s")
+    if info:
+        report(info[2], info[0])
 
 
 def ensure_radar(map_name):
@@ -91,16 +151,34 @@ def ensure_radar(map_name):
     return info
 
 
-def fetch_avatar(steam_id):
-    url = f"https://steamcommunity.com/profiles/{steam_id}/?xml=1"
+def retry_delay(error, attempt):
+    header = error.headers.get("Retry-After") if error.headers else None
     try:
-        request_obj = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-        with urllib.request.urlopen(request_obj, timeout=6) as response:
-            profile = ET.fromstring(response.read())
-        return (profile.findtext("avatarMedium") or profile.findtext("avatarFull") or "").strip()
-    except Exception as error:
-        print(f"[avatars] {steam_id}: {error}")
-        return None
+        return min(float(header), 6.0)
+    except (TypeError, ValueError):
+        return float(min(2 ** (attempt + 1), 6))
+
+
+def fetch_avatar(steam_id, attempts=3):
+    url = f"https://steamcommunity.com/profiles/{steam_id}/?xml=1"
+    time.sleep(0.3)
+    for attempt in range(attempts):
+        try:
+            request_obj = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+            with urllib.request.urlopen(request_obj, timeout=6) as response:
+                profile = ET.fromstring(response.read())
+            return (profile.findtext("avatarMedium") or profile.findtext("avatarFull") or "").strip()
+        except urllib.error.HTTPError as error:
+            if error.code != 429:
+                print(f"[avatars] {steam_id}: {error}")
+                return None
+            if attempt < attempts - 1:
+                time.sleep(retry_delay(error, attempt))
+        except Exception as error:
+            print(f"[avatars] {steam_id}: {error}")
+            return None
+    print(f"[avatars] {steam_id}: rate limited, will retry next time")
+    return None
 
 
 def fetch_avatars(steam_ids):
@@ -114,7 +192,7 @@ def fetch_avatars(steam_ids):
             cache = {}
     missing = [sid for sid in set(steam_ids) if sid and sid not in cache]
     if missing:
-        with ThreadPoolExecutor(8) as pool:
+        with ThreadPoolExecutor(2) as pool:
             for sid, url in zip(missing, pool.map(fetch_avatar, missing)):
                 if url is not None:
                     cache[sid] = url
@@ -135,6 +213,21 @@ def safe_event(parser, name, **kwargs):
             return as_frame(parser.parse_event(name))
         except Exception:
             return pd.DataFrame()
+
+
+def load_events(parser, names):
+    frames = {}
+    try:
+        result = parser.parse_events(names)
+        items = result.items() if isinstance(result, dict) else result
+        for name, frame in items:
+            frames[name] = as_frame(frame)
+    except Exception as error:
+        print("[events] batch parse failed, reading events one by one:", error)
+        frames = {name: safe_event(parser, name) for name in names}
+    for name in names:
+        frames.setdefault(name, pd.DataFrame())
+    return frames
 
 
 def to_number(value, default=0.0):
@@ -351,9 +444,9 @@ def team_names(parser, tick, team_a, team_b, names):
     return pick(team_a), pick(team_b)
 
 
-def combat_events(parser, player_index):
+def combat_events(events, player_index):
     fires, hurts = [], []
-    frame = safe_event(parser, "weapon_fire")
+    frame = events["weapon_fire"]
     if not frame.empty and "user_name" in frame.columns:
         weapon_column = "weapon" if "weapon" in frame.columns else None
         for row in frame.itertuples():
@@ -362,7 +455,7 @@ def combat_events(parser, player_index):
             if index is None or any(w in weapon for w in NON_FIRING_WEAPONS):
                 continue
             fires.append([int(row.tick), index])
-    frame = safe_event(parser, "player_hurt")
+    frame = events["player_hurt"]
     if not frame.empty and "user_name" in frame.columns:
         for row in frame.itertuples():
             index = player_index.get(getattr(row, "user_name", None))
@@ -374,8 +467,8 @@ def combat_events(parser, player_index):
     return fires, hurts
 
 
-def blind_events(parser, player_index):
-    frame = safe_event(parser, "player_blind")
+def blind_events(events, player_index):
+    frame = events["player_blind"]
     blinds, last_seen = [], {}
     if frame.empty or "user_name" not in frame.columns:
         return blinds
@@ -394,10 +487,10 @@ def blind_events(parser, player_index):
     return blinds
 
 
-def round_end_ticks(parser, win_ticks):
+def round_end_ticks(events, win_ticks):
     candidates = []
     for name in ("round_officially_ended", "round_start"):
-        frame = safe_event(parser, name)
+        frame = events[name]
         if not frame.empty:
             candidates += [int(t) for t in frame["tick"]]
     candidates = sorted(set(candidates))
@@ -409,16 +502,49 @@ def round_end_ticks(parser, win_ticks):
     return result
 
 
+def prepare_player_ticks(frame, player_index):
+    frame = frame[frame["team_num"].isin([2, 3]) & frame["name"].notna()]
+    prepared = pd.DataFrame({
+        "tick": frame["tick"].astype(int),
+        "pi": frame["name"].map(player_index).astype(int),
+        "X": frame["X"].fillna(0).round().astype(int),
+        "Y": frame["Y"].fillna(0).round().astype(int),
+        "health": frame["health"].fillna(0).astype(int),
+        "yaw": frame["yaw"].fillna(0).round(1),
+        "team": frame["team_num"].astype(int),
+        "Z": frame["Z"].fillna(0).round().astype(int),
+    })
+    columns = ["pi", "X", "Y", "health", "yaw", "team", "Z"]
+    ordered = prepared.sort_values("tick", kind="stable")
+    tick_values = ordered["tick"].to_numpy()
+    rows_by_tick = {}
+    if len(tick_values):
+        column_lists = [ordered[column].tolist() for column in columns]
+        all_rows = [list(row) for row in zip(*column_lists)]
+        boundaries = np.flatnonzero(np.diff(tick_values)) + 1
+        starts = np.concatenate(([0], boundaries))
+        ends = np.concatenate((boundaries, [len(tick_values)]))
+        for start, end in zip(starts, ends):
+            rows_by_tick[int(tick_values[start])] = all_rows[start:end]
+    return prepared, rows_by_tick
+
+
 def build_replay(parser, step=STEP):
+    total_start = time.perf_counter()
     header = parser.parse_header()
     map_name = header.get("map_name", "unknown")
 
-    freeze = safe_event(parser, "round_freeze_end")
-    ends = safe_event(parser, "round_end").sort_values("tick")
+    with timed("events"):
+        events = load_events(parser, EVENT_NAMES)
+        deaths = safe_event(parser, "player_death", player=["X", "Y", "Z"])
+
+    freeze = events["round_freeze_end"]
+    ends = events["round_end"]
     if freeze.empty or ends.empty:
         raise ValueError("No round events found in this demo")
+    ends = ends.sort_values("tick")
     freeze_ticks = sorted(int(t) for t in freeze["tick"])
-    full_end_ticks = round_end_ticks(parser, [int(t) for t in ends["tick"]])
+    full_end_ticks = round_end_ticks(events, [int(t) for t in ends["tick"]])
 
     rounds, previous_win = [], 0
     for (_, row), full_end in zip(ends.iterrows(), full_end_ticks):
@@ -440,44 +566,47 @@ def build_replay(parser, step=STEP):
         t for r in rounds for t in list(range(r["start"], r["end"], step)) + [r["end"]]
     })
     props = ["X", "Y", "Z", "health", "team_num", "yaw", "name"]
-    ticks_frame = as_frame(parser.parse_ticks(props, ticks=wanted))
-    ticks_frame = ticks_frame[ticks_frame["team_num"].isin([2, 3])]
+    with timed("tick data"):
+        ticks_frame = as_frame(parser.parse_ticks(props, ticks=wanted))
+        ticks_frame = ticks_frame[ticks_frame["team_num"].isin([2, 3])]
 
     names = sorted(ticks_frame["name"].dropna().unique().tolist())
     player_index = {name: i for i, name in enumerate(names)}
-    ticks_frame = ticks_frame.assign(pi=ticks_frame["name"].map(player_index))
-    by_tick = {tick: group for tick, group in ticks_frame.groupby("tick")}
+
+    with timed("prepare ticks"):
+        prepared, rows_by_tick = prepare_player_ticks(ticks_frame, player_index)
 
     steam_ids = {}
     if "steamid" in ticks_frame.columns:
-        for name, value in zip(ticks_frame["name"], ticks_frame["steamid"]):
-            if name in steam_ids:
-                continue
+        for name, value in ticks_frame.drop_duplicates("name")[["name", "steamid"]].itertuples(index=False):
             try:
                 steam_id = str(int(value))
                 if steam_id != "0":
                     steam_ids[name] = steam_id
             except Exception:
                 pass
-    avatar_by_id = fetch_avatars(list(steam_ids.values())) if steam_ids else {}
-    avatars = [avatar_by_id.get(steam_ids.get(name, ""), "") for name in names]
+    avatar_pool = ThreadPoolExecutor(max_workers=1)
+    avatar_future = avatar_pool.submit(fetch_avatars, list(steam_ids.values())) if steam_ids else None
 
-    deaths = safe_event(parser, "player_death", player=["X", "Y", "Z"])
     detonation_frames = {
-        "smoke": safe_event(parser, "smokegrenade_detonate"),
-        "flash": safe_event(parser, "flashbang_detonate"),
-        "he": safe_event(parser, "hegrenade_detonate"),
-        "molly": safe_event(parser, "inferno_startburn"),
+        "smoke": events["smokegrenade_detonate"],
+        "flash": events["flashbang_detonate"],
+        "he": events["hegrenade_detonate"],
+        "molly": events["inferno_startburn"],
     }
     expirations = []
     for event_name in ("smokegrenade_expired", "inferno_expire"):
-        frame = safe_event(parser, event_name)
+        frame = events[event_name]
         if not frame.empty and "entityid" in frame.columns:
             expirations += [(int(r.entityid), int(r.tick)) for r in frame.itertuples()]
     bomb_frames = {
-        kind: safe_event(parser, f"bomb_{kind}") for kind in ("planted", "defused", "exploded")
+        "planted": events["bomb_planted"],
+        "defused": events["bomb_defused"],
+        "exploded": events["bomb_exploded"],
     }
-    flights = grenade_flights(parser)
+
+    with timed("grenades"):
+        flights = grenade_flights(parser)
     detonations = []
     for kind, frame in detonation_frames.items():
         for row in frame.itertuples():
@@ -488,96 +617,88 @@ def build_replay(parser, step=STEP):
                 "y": to_number(getattr(row, "y", 0)),
                 "z": to_number(getattr(row, "z", 0)),
             })
-    all_fires, all_hurts = combat_events(parser, player_index)
-    all_blinds = blind_events(parser, player_index)
+    all_fires, all_hurts = combat_events(events, player_index)
+    all_blinds = blind_events(events, player_index)
 
     def within_round(frame, round_info):
         if frame.empty:
             return frame
         return frame[(frame["tick"] >= round_info["start"]) & (frame["tick"] <= round_info["end"])]
 
-    items, snapshots = parse_snapshots(parser, rounds, player_index)
+    with timed("snapshots"):
+        items, snapshots = parse_snapshots(parser, rounds, player_index)
 
-    output_rounds, all_x, all_y = [], [], []
-    for round_info in rounds:
-        frames = []
-        for tick in range(round_info["start"], round_info["end"], step):
-            group = by_tick.get(tick)
-            if group is None:
-                continue
-            rows = []
-            for row in group.itertuples():
-                x, y = to_number(row.X), to_number(row.Y)
-                all_x.append(x)
-                all_y.append(y)
-                rows.append([
-                    int(row.pi), round(x), round(y), int(to_number(row.health)),
-                    round(to_number(row.yaw), 1), int(row.team_num), round(to_number(row.Z)),
-                ])
-            frames.append([tick, rows])
-        sides = {str(r[0]): r[5] for r in frames[0][1]} if frames else {}
+    output_rounds = []
+    with timed("build rounds"):
+        for round_info in rounds:
+            frames = []
+            for tick in range(round_info["start"], round_info["end"], step):
+                rows = rows_by_tick.get(tick)
+                if rows is not None:
+                    frames.append([tick, rows])
+            sides = {str(r[0]): r[5] for r in frames[0][1]} if frames else {}
 
-        events = []
-        for row in within_round(deaths, round_info).itertuples():
-            attacker = str(getattr(row, "attacker_name", "") or "")
-            victim = str(getattr(row, "user_name", "") or "")
-            assister = str(getattr(row, "assister_name", "") or "")
-            events.append({
-                "t": int(row.tick),
-                "type": "kill",
-                "att": attacker,
-                "vic": victim,
-                "ast": assister,
-                "attackerId": player_index.get(attacker, -1),
-                "victimId": player_index.get(victim, -1),
-                "assisterId": player_index.get(assister, -1),
-                "weapon": str(getattr(row, "weapon", "") or ""),
-                "hs": to_flag(getattr(row, "headshot", False)),
-                "wb": to_flag(getattr(row, "penetrated", 0)),
-                "ns": to_flag(getattr(row, "noscope", False)),
-                "smoke": to_flag(getattr(row, "thrusmoke", False)),
-                "blind": to_flag(getattr(row, "attackerblind", False)),
-                "flashAssist": to_flag(getattr(row, "assistedflash", False)),
-                "x": to_number(getattr(row, "user_X", 0)),
-                "y": to_number(getattr(row, "user_Y", 0)),
-                "z": to_number(getattr(row, "user_Z", 0)),
-            })
-        for kind, frame in detonation_frames.items():
-            for row in within_round(frame, round_info).itertuples():
-                tick = int(row.tick)
-                entity = getattr(row, "entityid", None)
-                entity = int(entity) if entity is not None and entity == entity else None
-                default = SMOKE_TICKS if kind == "smoke" else MOLLY_TICKS if kind == "molly" else 0
-                end = tick
-                if default:
-                    later = [t for (e, t) in expirations if e == entity and t >= tick]
-                    end = min(later) if later else tick + default
-                    end = min(end, tick + 2 * default)
-                events.append({
-                    "t": tick,
-                    "end": max(end, tick),
-                    "type": kind,
-                    "eid": entity,
-                    "x": to_number(getattr(row, "x", 0)),
-                    "y": to_number(getattr(row, "y", 0)),
-                    "z": to_number(getattr(row, "z", 0)),
+            round_events = []
+            for row in within_round(deaths, round_info).itertuples():
+                attacker = str(getattr(row, "attacker_name", "") or "")
+                victim = str(getattr(row, "user_name", "") or "")
+                assister = str(getattr(row, "assister_name", "") or "")
+                round_events.append({
+                    "t": int(row.tick),
+                    "type": "kill",
+                    "att": attacker,
+                    "vic": victim,
+                    "ast": assister,
+                    "attackerId": player_index.get(attacker, -1),
+                    "victimId": player_index.get(victim, -1),
+                    "assisterId": player_index.get(assister, -1),
+                    "weapon": str(getattr(row, "weapon", "") or ""),
+                    "hs": to_flag(getattr(row, "headshot", False)),
+                    "wb": to_flag(getattr(row, "penetrated", 0)),
+                    "ns": to_flag(getattr(row, "noscope", False)),
+                    "smoke": to_flag(getattr(row, "thrusmoke", False)),
+                    "blind": to_flag(getattr(row, "attackerblind", False)),
+                    "flashAssist": to_flag(getattr(row, "assistedflash", False)),
+                    "x": to_number(getattr(row, "user_X", 0)),
+                    "y": to_number(getattr(row, "user_Y", 0)),
+                    "z": to_number(getattr(row, "user_Z", 0)),
                 })
-        for kind, frame in bomb_frames.items():
-            for row in within_round(frame, round_info).itertuples():
-                events.append({"t": int(row.tick), "type": "bomb_" + kind})
-        events.sort(key=lambda event: event["t"])
+            for kind, frame in detonation_frames.items():
+                for row in within_round(frame, round_info).itertuples():
+                    tick = int(row.tick)
+                    entity = getattr(row, "entityid", None)
+                    entity = int(entity) if entity is not None and entity == entity else None
+                    default = SMOKE_TICKS if kind == "smoke" else MOLLY_TICKS if kind == "molly" else 0
+                    end = tick
+                    if default:
+                        later = [t for (e, t) in expirations if e == entity and t >= tick]
+                        end = min(later) if later else tick + default
+                        end = min(end, tick + 2 * default)
+                    round_events.append({
+                        "t": tick,
+                        "end": max(end, tick),
+                        "type": kind,
+                        "eid": entity,
+                        "x": to_number(getattr(row, "x", 0)),
+                        "y": to_number(getattr(row, "y", 0)),
+                        "z": to_number(getattr(row, "z", 0)),
+                    })
+            for kind, frame in bomb_frames.items():
+                for row in within_round(frame, round_info).itertuples():
+                    round_events.append({"t": int(row.tick), "type": "bomb_" + kind})
+            round_events.sort(key=lambda event: event["t"])
 
-        output_rounds.append({
-            **round_info,
-            "frames": frames,
-            "events": events,
-            "sides": sides,
-            "traj": build_trajectories(flights, detonations, round_info),
-            "snaps": snapshots.get(round_info["n"], []),
-            "fires": [f for f in all_fires if round_info["start"] <= f[0] <= round_info["end"]],
-            "hurts": [h for h in all_hurts if round_info["start"] <= h[0] <= round_info["end"]],
-            "blinds": [b for b in all_blinds if round_info["start"] <= b[0] <= round_info["end"]],
-        })
+            output_rounds.append({
+                **round_info,
+                "frames": frames,
+                "events": round_events,
+                "sides": sides,
+                "traj": build_trajectories(flights, detonations, round_info),
+                "snaps": snapshots.get(round_info["n"], []),
+                "fires": [f for f in all_fires if round_info["start"] <= f[0] <= round_info["end"]],
+                "hurts": [h for h in all_hurts if round_info["start"] <= h[0] <= round_info["end"]],
+                "blinds": [b for b in all_blinds if round_info["start"] <= b[0] <= round_info["end"]],
+            })
 
     team_a, team_b = [], []
     first = next((r for r in output_rounds if r["sides"]), None)
@@ -597,16 +718,30 @@ def build_replay(parser, step=STEP):
             round_info["wTeam"] = ""
     name_a, name_b = (None, None)
     if first:
-        name_a, name_b = team_names(parser, first["start"], team_a, team_b, names)
+        with timed("team names"):
+            name_a, name_b = team_names(parser, first["start"], team_a, team_b, names)
 
     bounds = None
-    if all_x:
-        bounds = {"minx": min(all_x), "maxx": max(all_x), "miny": min(all_y), "maxy": max(all_y)}
+    if len(prepared):
+        bounds = {
+            "minx": int(prepared["X"].min()), "maxx": int(prepared["X"].max()),
+            "miny": int(prepared["Y"].min()), "maxy": int(prepared["Y"].max()),
+        }
+
+    with timed("avatars (waiting)"):
+        avatar_by_id = avatar_future.result() if avatar_future else {}
+    avatar_pool.shutdown()
+    avatars = [avatar_by_id.get(steam_ids.get(name, ""), "") for name in names]
+
+    with timed("radar"):
+        radar = ensure_radar(map_name)
+
     print(
         f"[replay] rounds={len(output_rounds)} "
         f"trajectories={sum(len(r['traj']) for r in output_rounds)} "
         f"avatars={sum(1 for a in avatars if a)}/{len(avatars)}"
     )
+    print(f"[time] total: {time.perf_counter() - total_start:.2f}s")
     return {
         "map": map_name,
         "tickrate": TICKRATE,
@@ -620,8 +755,51 @@ def build_replay(parser, step=STEP):
         "items": items,
         "rounds": output_rounds,
         "bounds": bounds,
-        **ensure_radar(map_name),
+        **radar,
     }
+
+
+def write_replay(path, data):
+    if orjson:
+        with open(path, "wb") as handle:
+            handle.write(orjson.dumps(data, option=orjson.OPT_SERIALIZE_NUMPY))
+    else:
+        with open(path, "w") as handle:
+            json.dump(data, handle, separators=(",", ":"))
+
+
+def run_job(job, path):
+    job_context.job = job
+    try:
+        digest = hashlib.sha1()
+        with open(path, "rb") as handle:
+            for chunk in iter(lambda: handle.read(1 << 20), b""):
+                digest.update(chunk)
+        key = digest.hexdigest()[:14] + CACHE_VERSION
+        cache_file = os.path.join(CACHE, key + ".json")
+        if not os.path.exists(cache_file):
+            data = build_replay(DemoParser(path))
+            with timed("write json"):
+                write_replay(cache_file, data)
+        job.update(percent=100, label="Done", state="done", id=key)
+    except Exception as error:
+        print("[job] failed:", error)
+        job.update(state="error", error=f"Parse error: {error}")
+    finally:
+        job_context.job = None
+        try:
+            os.unlink(path)
+        except OSError:
+            pass
+
+
+def create_job():
+    job_id = uuid.uuid4().hex
+    job = {"percent": 0, "label": "Starting", "state": "running", "id": None, "error": None}
+    jobs[job_id] = job
+    while len(jobs) > MAX_STORED_JOBS:
+        jobs.pop(next(iter(jobs)))
+    return job_id, job
 
 
 @app.get("/")
@@ -668,22 +846,17 @@ def upload():
     with tempfile.NamedTemporaryFile(suffix=".dem", delete=False) as temp:
         uploaded.save(temp.name)
         path = temp.name
-    try:
-        digest = hashlib.sha1()
-        with open(path, "rb") as handle:
-            for chunk in iter(lambda: handle.read(1 << 20), b""):
-                digest.update(chunk)
-        key = digest.hexdigest()[:14] + CACHE_VERSION
-        cache_file = os.path.join(CACHE, key + ".json")
-        if not os.path.exists(cache_file):
-            data = build_replay(DemoParser(path))
-            with open(cache_file, "w") as handle:
-                json.dump(data, handle, separators=(",", ":"))
-        return jsonify(id=key)
-    except Exception as error:
-        return jsonify(error=f"Parse error: {error}"), 500
-    finally:
-        os.unlink(path)
+    job_id, job = create_job()
+    threading.Thread(target=run_job, args=(job, path), daemon=True).start()
+    return jsonify(job=job_id)
+
+
+@app.get("/api/progress/<job_id>")
+def get_progress(job_id):
+    job = jobs.get(job_id)
+    if job is None:
+        abort(404)
+    return jsonify(job)
 
 
 @app.get("/api/replay/<key>")
@@ -696,4 +869,4 @@ def get_replay(key):
 
 
 if __name__ == "__main__":
-    app.run(host="127.0.0.1", port=5000, debug=False)
+    app.run(host="127.0.0.1", port=5000, debug=False, threaded=True)
