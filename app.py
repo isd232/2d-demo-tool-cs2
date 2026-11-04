@@ -1,3 +1,4 @@
+import gzip
 import hashlib
 import json
 import math
@@ -24,6 +25,11 @@ try:
 except ImportError:
     orjson = None
 
+try:
+    import zstandard
+except ImportError:
+    zstandard = None
+
 BASE = os.path.dirname(os.path.abspath(__file__))
 CACHE = os.path.join(BASE, "cache")
 MAPS = os.path.join(BASE, "maps")
@@ -42,6 +48,10 @@ POST_ROUND_TICKS = 7 * TICKRATE
 MAX_POST_ROUND_TICKS = 15 * TICKRATE
 MAX_STORED_JOBS = 20
 
+GZIP_MAGIC = b"\x1f\x8b"
+ZSTD_MAGIC = b"\x28\xb5\x2f\xfd"
+ALLOWED_UPLOAD_SUFFIXES = (".dem", ".gz", ".zst")
+
 EVENT_NAMES = [
     "round_freeze_end", "round_end", "round_start", "round_officially_ended",
     "smokegrenade_detonate", "flashbang_detonate", "hegrenade_detonate", "inferno_startburn",
@@ -51,11 +61,12 @@ EVENT_NAMES = [
 ]
 
 STAGES = [
+    ("decompress", "Unpacking demo", 6),
     ("events", "Reading events", 10),
     ("tick data", "Reading player positions", 15),
     ("prepare ticks", "Preparing positions", 5),
-    ("grenades", "Tracking grenades", 25),
-    ("snapshots", "Reading equipment", 20),
+    ("grenades", "Tracking grenades", 22),
+    ("snapshots", "Reading equipment", 17),
     ("build rounds", "Building rounds", 8),
     ("team names", "Finding team names", 5),
     ("avatars (waiting)", "Loading avatars", 7),
@@ -114,6 +125,34 @@ def timed(label):
     print(f"[time] {label}: {time.perf_counter() - start:.2f}s")
     if info:
         report(info[2], info[0])
+
+
+def detect_compression(path):
+    with open(path, "rb") as handle:
+        head = handle.read(4)
+    if head[:2] == GZIP_MAGIC:
+        return "gzip"
+    if head == ZSTD_MAGIC:
+        return "zstd"
+    return None
+
+
+def unpack_demo(path, compression):
+    target = tempfile.NamedTemporaryFile(suffix=".dem", delete=False)
+    target.close()
+    try:
+        with open(path, "rb") as source, open(target.name, "wb") as output:
+            if compression == "gzip":
+                with gzip.GzipFile(fileobj=source) as unpacked:
+                    shutil.copyfileobj(unpacked, output, 1 << 20)
+            else:
+                if zstandard is None:
+                    raise RuntimeError("Reading .zst files needs the zstandard package (pip install zstandard)")
+                zstandard.ZstdDecompressor(max_window_size=2**31).copy_stream(source, output)
+    except Exception:
+        os.unlink(target.name)
+        raise
+    return target.name
 
 
 def ensure_radar(map_name):
@@ -770,15 +809,22 @@ def write_replay(path, data):
 
 def run_job(job, path):
     job_context.job = job
+    demo_path = path
     try:
+        compression = detect_compression(path)
+        if compression:
+            with timed("decompress"):
+                demo_path = unpack_demo(path, compression)
+        else:
+            report(STAGE_INFO["decompress"][2], "Reading demo")
         digest = hashlib.sha1()
-        with open(path, "rb") as handle:
+        with open(demo_path, "rb") as handle:
             for chunk in iter(lambda: handle.read(1 << 20), b""):
                 digest.update(chunk)
         key = digest.hexdigest()[:14] + CACHE_VERSION
         cache_file = os.path.join(CACHE, key + ".json")
         if not os.path.exists(cache_file):
-            data = build_replay(DemoParser(path))
+            data = build_replay(DemoParser(demo_path))
             with timed("write json"):
                 write_replay(cache_file, data)
         job.update(percent=100, label="Done", state="done", id=key)
@@ -787,10 +833,11 @@ def run_job(job, path):
         job.update(state="error", error=f"Parse error: {error}")
     finally:
         job_context.job = None
-        try:
-            os.unlink(path)
-        except OSError:
-            pass
+        for temp_path in {path, demo_path}:
+            try:
+                os.unlink(temp_path)
+            except OSError:
+                pass
 
 
 def create_job():
@@ -841,9 +888,9 @@ def serve_icon(name):
 @app.post("/api/upload")
 def upload():
     uploaded = request.files.get("demo")
-    if not uploaded or not uploaded.filename.lower().endswith(".dem"):
-        return jsonify(error="Upload a .dem file"), 400
-    with tempfile.NamedTemporaryFile(suffix=".dem", delete=False) as temp:
+    if not uploaded or not uploaded.filename.lower().endswith(ALLOWED_UPLOAD_SUFFIXES):
+        return jsonify(error="Upload a .dem, .dem.gz or .dem.zst file"), 400
+    with tempfile.NamedTemporaryFile(suffix=".upload", delete=False) as temp:
         uploaded.save(temp.name)
         path = temp.name
     job_id, job = create_job()
