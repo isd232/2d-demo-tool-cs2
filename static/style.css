@@ -299,6 +299,15 @@ canvas.panning { cursor: grabbing; }
   justify-content: center;
   background: rgba(0, 0, 0, .65);
 }
+
+#matchstats .sb-team table, #scoreboard .sb-team table { table-layout: fixed; }
+#matchstats .sb-team th:first-child, #scoreboard .sb-team th:first-child { width: 26%; }
+#matchstats .sb-team th, #matchstats .sb-team td { padding-left: 3px; padding-right: 3px; }
+#matchstats .sb-team th:first-child, #matchstats .sb-team td:first-child { padding-left: 6px; }
+
+.sb-team td.sb-name { display: table-cell; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sb-team .sb-avatar { margin-right: 8px; vertical-align: middle; }
+
 .ms-card {
   position: relative;
   width: min(1000px, 96vw);
