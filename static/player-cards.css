@@ -1,0 +1,59 @@
+#colA .card, #colB .card {
+  background: #171c26;
+  border: 1px solid #2c3443;
+  border-left: 3px solid var(--c);
+  border-radius: 8px;
+  padding: 9px 10px 13px;
+  margin-bottom: 9px;
+  min-height: 72px;
+  transition: border-color .12s, box-shadow .12s, filter .12s;
+}
+
+#colA .card::before, #colB .card::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  width: clamp(0%, var(--hp), 100%);
+  height: 3px;
+  background: var(--c);
+  border-radius: 0 2px 2px 0;
+}
+
+#colA .card.dead, #colB .card.dead {
+  background: #11151c;
+  filter: grayscale(1);
+  opacity: .68;
+}
+
+#colA .card.player-hovered, #colB .card.player-hovered {
+  border-color: #c8d4e9;
+  box-shadow: 0 0 0 1px #c8d4e940;
+}
+
+.card .card-top { min-height: 24px; gap: 7px; }
+.card .card-name { min-width: 0; font-size: 13px; }
+.card .weapons {
+  flex: 0 0 94px;
+  justify-content: flex-end;
+  gap: 7px;
+  overflow: hidden;
+}
+.card .weapons .wicon { max-width: 40px; height: 15px; opacity: .3; }
+.card .weapons .wicon.active { opacity: 1; height: 18px; max-width: 52px; filter: drop-shadow(0 0 2px #ffffff44); }
+.card .card-info { min-height: 20px; gap: 5px; margin-top: 5px; }
+.card .money { min-width: 48px; font-size: 12px; }
+.card .card-hp { min-width: 21px; text-align: right; font-size: 12px; font-variant-numeric: tabular-nums; }
+.card .uicon { height: 14px; max-width: 23px; }
+.card .avatar { width: 23px; height: 23px; }
+
+#player-hover-ring {
+  position: absolute;
+  z-index: 1;
+  border: 2px solid #f0f5ff;
+  border-radius: 50%;
+  transform: translate(-50%, -50%);
+  box-shadow: 0 0 9px #b6ceff88;
+  pointer-events: none;
+}
+#player-hover-ring[hidden] { display: none; }

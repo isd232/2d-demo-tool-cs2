@@ -14,6 +14,7 @@ import {
 import './timeline-ui.js';
 import './toolbar.js';
 import './scoreboard-polish.js';
+import './player-cards.js';
 
 const UPLOAD_SHARE = 5;
 const DOWNLOAD_SHARE = 10;
