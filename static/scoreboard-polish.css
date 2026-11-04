@@ -1,0 +1,66 @@
+#scoreboard .sb-team table,
+#matchstats .sb-team table {
+  width: 100%;
+  table-layout: fixed;
+  border-collapse: collapse;
+}
+
+#scoreboard .sb-team th,
+#matchstats .sb-team th,
+#scoreboard .sb-team td,
+#matchstats .sb-team td {
+  padding: 6px 5px;
+  text-align: right;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+#scoreboard .sb-team th:first-child,
+#matchstats .sb-team th:first-child,
+#scoreboard .sb-team td:first-child,
+#matchstats .sb-team td:first-child {
+  width: 26%;
+  text-align: left;
+}
+
+#scoreboard .sb-team td.sb-name,
+#matchstats .sb-team td.sb-name {
+  display: table-cell;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+#scoreboard .sb-avatar,
+#matchstats .sb-avatar {
+  margin-right: 8px;
+  vertical-align: middle;
+  flex-shrink: 0;
+}
+
+#scoreboard .sb-team th[title],
+#matchstats .sb-team th[title] { cursor: help; }
+
+#scoreboard .sb-team,
+#matchstats .sb-team { overflow-x: auto; }
+
+#matchstats .sb-team table { min-width: 900px; }
+#scoreboard .sb-team table { min-width: 560px; }
+
+#scoreboard .sb-title,
+#matchstats .sb-title {
+  line-height: 1.6;
+  letter-spacing: .07em;
+  color: #a5afbf;
+  padding-right: 24px;
+}
+
+#scoreboard {
+  pointer-events: auto;
+  scrollbar-width: thin;
+}
+
+#matchstats .ms-card { scrollbar-width: thin; }
+
+#scoreboard .sb-team tbody tr:hover,
+#matchstats .sb-team tbody tr:hover { background: #ffffff05; }
