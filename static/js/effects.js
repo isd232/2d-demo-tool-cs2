@@ -1,3 +1,4 @@
+import { drawPlayerLabels } from './player-labels.js';
 import { state } from './state.js';
 import { ctx } from './canvas.js';
 import { worldToCanvas, worldLength, onCurrentLevel } from './geometry.js';
@@ -352,16 +353,6 @@ export function drawPlayers(players) {
     drawPlayerIcon(d.p, d.x, d.y, d.avatar, d.radius, k);
   }
 
-  ctx.font = `${13 * k}px system-ui`;
-  ctx.textAlign = 'center';
-  ctx.lineWidth = 3 * k;
-  for (const d of drawn) {
-    ctx.globalAlpha = onCurrentLevel(d.p[6]) ? 1 : 0.25;
-    const label = data.players[d.p[0]];
-    ctx.strokeStyle = '#000';
-    ctx.strokeText(label, d.x, d.y - d.radius - 6 * k);
-    ctx.fillStyle = '#fff';
-    ctx.fillText(label, d.x, d.y - d.radius - 6 * k);
-  }
+  drawPlayerLabels(drawn, k);
   ctx.globalAlpha = 1;
 }
